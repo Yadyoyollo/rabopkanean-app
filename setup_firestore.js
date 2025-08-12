@@ -1,17 +1,17 @@
 
+
+require('dotenv').config();
 const { initializeApp } = require('firebase/app');
 const { getFirestore, doc, setDoc, collection, addDoc } = require('firebase/firestore');
 
-// Firebase configuration - ใส่ config ของคุณที่นี่
+// Firebase configuration จาก .env file
 const firebaseConfig = {
-  // คุณต้องใส่ค่าจริงจาก Firebase Console ของคุณ
-  // ไปที่ Project Settings > General > Your apps
-  apiKey: "YOUR_ACTUAL_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com", 
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID
 };
 
 // Initialize Firebase
@@ -21,17 +21,17 @@ const db = getFirestore(app);
 async function setupFirestoreStructure() {
   try {
     // ตรวจสอบว่า config ถูกตั้งค่าแล้วหรือยัง
-    if (firebaseConfig.projectId === "YOUR_PROJECT_ID" || firebaseConfig.apiKey === "YOUR_ACTUAL_API_KEY") {
-      console.error('❌ กรุณาใส่ Firebase configuration ที่ถูกต้องก่อน');
-      console.log('📝 ไปที่ Firebase Console > Project Settings > General > Your apps');
-      console.log('📝 คัดลอก config object และใส่ใน setup_firestore.js');
+    if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
+      console.error('❌ ไม่พบ Firebase configuration ในไฟล์ .env');
+      console.log('📝 ตรวจสอบว่าไฟล์ .env มีอยู่และมีค่า REACT_APP_FIREBASE_* ครบถ้วน');
       return;
     }
 
     console.log('เริ่มต้นสร้างโครงสร้าง Firestore...');
+    console.log('Project ID:', firebaseConfig.projectId);
 
     // สร้างโครงสร้างหลัก: artifacts/default-app-id/
-    const appId = 'default-app-id'; // หรือใช้ CANVAS_APP_ID ของคุณ
+    const appId = process.env.REACT_APP_APP_ID || 'default-app-id';
 
     // 1. สร้าง appState/control document
     await setDoc(doc(db, `artifacts/${appId}/public/data/appState/control`), {
@@ -118,6 +118,13 @@ async function setupFirestoreStructure() {
 
   } catch (error) {
     console.error('❌ เกิดข้อผิดพลาดในการสร้างโครงสร้าง:', error);
+    
+    if (error.code === 'permission-denied') {
+      console.log('💡 แนะนำการแก้ไข:');
+      console.log('   1. ตรวจสอบว่าได้เปิดใช้ Firestore ในโปรเจคแล้ว');
+      console.log('   2. ตรวจสอบ Firestore Security Rules');
+      console.log('   3. ตรวจสอบว่า Project ID ถูกต้อง');
+    }
   }
 }
 
@@ -129,3 +136,4 @@ setupFirestoreStructure().then(() => {
   console.error('Error:', error);
   process.exit(1);
 });
+
