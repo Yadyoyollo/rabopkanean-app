@@ -1,62 +1,75 @@
+
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
     // Helper function to check if user is admin
-    function isAdmin() {
+    function isAdmin(appId) {
       return request.auth != null && 
         (request.auth.token.email == 'prathipweiyngya@gmail.com' ||
          request.auth.token.role == 'admin' ||
-         exists(/databases/$(database)/documents/artifacts/nrkaneanproject/public/data/judges/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/artifacts/nrkaneanproject/public/data/judges/$(request.auth.uid)).data.role == 'admin');
+         (exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/judges/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/artifacts/$(appId)/public/data/judges/$(request.auth.uid)).data.role == 'admin'));
     }
 
     // Helper function to check if user is judge or admin
-    function isJudgeOrAdmin() {
+    function isJudgeOrAdmin(appId) {
       return request.auth != null && 
-        (isAdmin() ||
-         exists(/databases/$(database)/documents/artifacts/nrkaneanproject/public/data/judges/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/artifacts/nrkaneanproject/public/data/judges/$(request.auth.uid)).data.role in ['judge', 'admin']);
+        (isAdmin(appId) ||
+         (exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/judges/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/artifacts/$(appId)/public/data/judges/$(request.auth.uid)).data.role in ['judge', 'admin']));
     }
 
-    // Public read access for contest data
-    match /artifacts/nrkaneanproject/public/data/contestants/{document=**} {
+    // Public read access for contest data - allow anonymous and authenticated users
+    match /artifacts/{appId}/public/data/contestants/{document=**} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin(appId);
     }
 
-    // App state control - admin only for write, authenticated users can read
-    match /artifacts/nrkaneanproject/public/data/appState/{document=**} {
-      allow read: if request.auth != null;
-      allow write: if isAdmin();
+    // App state control - allow anonymous read for audience display, admin write
+    match /artifacts/{appId}/public/data/appState/{document=**} {
+      allow read: if true; // Allow anonymous users to read app state for audience display
+      allow write: if isAdmin(appId);
     }
 
-    // Aggregated scores - admin write, authenticated read
-    match /artifacts/nrkaneanproject/public/data/aggregatedScores/{document=**} {
-      allow read: if request.auth != null;
-      allow write: if isAdmin();
+    // Aggregated scores - allow anonymous read for public display, admin write
+    match /artifacts/{appId}/public/data/aggregatedScores/{document=**} {
+      allow read: if true; // Allow anonymous users to read aggregated scores for public display
+      allow write: if isAdmin(appId);
     }
 
-    // Judges collection - admin manage, self-read
-    match /artifacts/nrkaneanproject/public/data/judges/{judgeId} {
+    // Judges collection - admin manage, self-read, allow admin email to bootstrap
+    match /artifacts/{appId}/public/data/judges/{judgeId} {
       allow read: if request.auth != null && 
-        (request.auth.uid == judgeId || isAdmin());
-      allow write: if isAdmin() ||
-        (request.auth.uid == judgeId && 
-         request.auth.token.email == 'prathipweiyngya@gmail.com');
+        (request.auth.uid == judgeId || isAdmin(appId));
+      allow write: if isAdmin(appId) ||
+        (request.auth != null && request.auth.uid == judgeId && 
+         request.auth.token.email == 'prathipweiyngya@gmail.com' &&
+         request.resource.data.role == 'admin');
     }
 
-    // User scores - judge write own, admin read all
+    // User scores - judge write own, admin read all, judges read own
+    match /artifacts/{appId}/users/{userId}/scores/{document=**} {
+      allow read: if request.auth != null && 
+        (request.auth.uid == userId || isAdmin(appId));
+      allow write: if request.auth != null && 
+        request.auth.uid == userId && isJudgeOrAdmin(appId);
+    }
+
+    // Legacy paths for backward compatibility
+    match /artifacts/nrkaneanproject/public/data/{document=**} {
+      allow read: if true;
+      allow write: if request.auth != null && 
+        (request.auth.token.email == 'prathipweiyngya@gmail.com' ||
+         request.auth.token.role == 'admin');
+    }
+
     match /artifacts/nrkaneanproject/users/{userId}/scores/{document=**} {
       allow read: if request.auth != null && 
-        (request.auth.uid == userId || isAdmin());
-      allow write: if request.auth != null && 
-        request.auth.uid == userId && isJudgeOrAdmin();
-    }
-
-    // Allow read access to public data for anonymous users (audience display)
-    match /artifacts/{appId}/public/data/{document=**} {
-      allow read: if true;
+        (request.auth.uid == userId || 
+         request.auth.token.email == 'prathipweiyngya@gmail.com' ||
+         request.auth.token.role == 'admin');
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     // Default: deny all other access
