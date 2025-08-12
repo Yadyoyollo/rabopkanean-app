@@ -4,12 +4,14 @@ const { getFirestore, doc, setDoc, collection, addDoc } = require('firebase/fire
 
 // Firebase configuration - ใส่ config ของคุณที่นี่
 const firebaseConfig = {
-  apiKey: "your-api-key",
-  authDomain: "your-project-id.firebaseapp.com",
-  projectId: "your-project-id",
-  storageBucket: "your-project-id.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "your-app-id"
+  // คุณต้องใส่ค่าจริงจาก Firebase Console ของคุณ
+  // ไปที่ Project Settings > General > Your apps
+  apiKey: "YOUR_ACTUAL_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com", 
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
 };
 
 // Initialize Firebase
@@ -18,6 +20,14 @@ const db = getFirestore(app);
 
 async function setupFirestoreStructure() {
   try {
+    // ตรวจสอบว่า config ถูกตั้งค่าแล้วหรือยัง
+    if (firebaseConfig.projectId === "YOUR_PROJECT_ID" || firebaseConfig.apiKey === "YOUR_ACTUAL_API_KEY") {
+      console.error('❌ กรุณาใส่ Firebase configuration ที่ถูกต้องก่อน');
+      console.log('📝 ไปที่ Firebase Console > Project Settings > General > Your apps');
+      console.log('📝 คัดลอก config object และใส่ใน setup_firestore.js');
+      return;
+    }
+
     console.log('เริ่มต้นสร้างโครงสร้าง Firestore...');
 
     // สร้างโครงสร้างหลัก: artifacts/default-app-id/
