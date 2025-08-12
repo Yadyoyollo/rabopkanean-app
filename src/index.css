@@ -1,0 +1,12 @@
+/* src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* คุณสามารถเพิ่ม CSS กำหนดเองที่นี่ได้ */
+body {
+  font-family: 'Inter', sans-serif; /* กำหนด Font Inter ตามคำแนะนำ */
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
