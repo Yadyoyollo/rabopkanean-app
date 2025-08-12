@@ -54,6 +54,11 @@ service cloud.firestore {
         request.auth.uid == userId && isJudgeOrAdmin();
     }
 
+    // Allow read access to public data for anonymous users (audience display)
+    match /artifacts/{appId}/public/data/{document=**} {
+      allow read: if true;
+    }
+
     // Default: deny all other access
     match /{document=**} {
       allow read, write: if false;
