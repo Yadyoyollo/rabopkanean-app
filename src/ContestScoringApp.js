@@ -122,66 +122,64 @@ const useFirebase = () => {
             setUserId(currentUser.uid);
             let userData = { uid: currentUser.uid, email: currentUser.email, role: 'audience' }; // Default role
 
+            // Enhanced role checking with better error handling
             try {
+              // First check custom claims
               const idTokenResult = await currentUser.getIdTokenResult();
               const customClaimRole = idTokenResult.claims.role;
 
               console.log("UID:", currentUser.uid);
-              console.log("ROLE (from Custom Claim):", customClaimRole);
+              console.log("Email:", currentUser.email);
+              console.log("Custom Claim Role:", customClaimRole);
 
-              if (customClaimRole) {
+              if (customClaimRole && ['admin', 'judge'].includes(customClaimRole)) {
                 userData.role = customClaimRole;
-                // Try to fetch name from judges collection if role is judge or admin
-                if (customClaimRole === 'judge' || customClaimRole === 'admin') {
-                  const judgeDocRef = doc(dbInstance, `artifacts/${CANVAS_APP_ID}/public/data/judges`, currentUser.uid);
-                  const judgeDocSnap = await getDoc(judgeDocRef);
-                  if (judgeDocSnap.exists()) {
-                    userData.name = judgeDocSnap.data().name;
-                  } else {
-                    userData.name = currentUser.displayName || currentUser.email; // Fallback name
-                  }
-                } else {
-                  userData.name = currentUser.displayName || currentUser.email; // Fallback name for other roles
-                }
-                // No need to show message here, as it will be shown when role is determined below
-              } else {
-                // Fallback to existing logic if no custom claim role is found
-                // This block is primarily for initial setup or if custom claims are not used.
-                // The primary security rule check is on the Firestore document's 'role' field.
+                console.log("Role from custom claims:", customClaimRole);
+              }
+
+              // Then check Firestore document (this takes precedence for security)
+              try {
                 const judgeDocRef = doc(dbInstance, `artifacts/${CANVAS_APP_ID}/public/data/judges`, currentUser.uid);
                 const judgeDocSnap = await getDoc(judgeDocRef);
+                
                 if (judgeDocSnap.exists()) {
-                  userData = { ...userData, ...judgeDocSnap.data() };
-                  console.log('User is Judge/Admin from Firestore (fallback):', userData.email, userData.role);
+                  const judgeData = judgeDocSnap.data();
+                  userData = { ...userData, ...judgeData };
+                  console.log("User data from Firestore:", judgeData);
+                  
+                  // Firestore role takes precedence
+                  if (judgeData.role && ['admin', 'judge'].includes(judgeData.role)) {
+                    userData.role = judgeData.role;
+                    console.log('Role confirmed from Firestore:', judgeData.role);
+                  }
                 } else {
-                  // If no custom claim and no Firestore profile, check if it's the hardcoded ADMIN_EMAIL
-                  if (currentUser.email === ADMIN_EMAIL) {
-                    userData.role = 'admin';
-                    userData.name = 'ผู้ดูแลระบบ';
-                    console.log('User is Admin (hardcoded email fallback):', currentUser.email);
-                    // IMPORTANT: For this hardcoded admin to work with write rules,
-                    // a document with role: 'admin' must exist in Firestore for their UID.
-                  } else {
-                    console.log('User profile not found in Firestore, setting as audience (fallback).');
+                  console.log("No Firestore document found for user:", currentUser.uid);
+                  // If no Firestore doc but has custom claims, use display name or email
+                  if (userData.role !== 'audience') {
+                    userData.name = currentUser.displayName || currentUser.email;
                   }
                 }
+              } catch (firestoreError) {
+                console.error("Error accessing Firestore judge document:", firestoreError);
+                showMessage(`เกิดข้อผิดพลาดในการเข้าถึงข้อมูลผู้ใช้: ${firestoreError.message}`, 'error');
               }
+
+              // Final fallback: check hardcoded admin email
+              if (userData.role === 'audience' && currentUser.email === ADMIN_EMAIL) {
+                userData.role = 'admin';
+                userData.name = 'ผู้ดูแลระบบ';
+                console.log('User identified as admin via hardcoded email:', currentUser.email);
+              }
+
             } catch (claimError) {
               console.error("Error fetching custom claims:", claimError);
-              // Fallback to existing logic if fetching claims fails
-              const judgeDocRef = doc(dbInstance, `artifacts/${CANVAS_APP_ID}/public/data/judges`, currentUser.uid);
-              const judgeDocSnap = await getDoc(judgeDocRef);
-              if (judgeDocSnap.exists()) {
-                userData = { ...userData, ...judgeDocSnap.data() };
-                console.log('User is Judge/Admin from Firestore (fallback due to claim error):', userData.email, userData.role);
-              } else {
-                if (currentUser.email === ADMIN_EMAIL) {
-                  userData.role = 'admin';
-                  userData.name = 'ผู้ดูแลระบบ';
-                  console.log('User is Admin (hardcoded email fallback due to claim error):', currentUser.email);
-                } else {
-                  console.log('User profile not found in Firestore, setting as audience (fallback due to claim error).');
-                }
+              showMessage(`เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์: ${claimError.message}`, 'error');
+              
+              // Fallback to hardcoded admin check
+              if (currentUser.email === ADMIN_EMAIL) {
+                userData.role = 'admin';
+                userData.name = 'ผู้ดูแลระบบ';
+                console.log('Admin access granted via hardcoded email fallback');
               }
             }
             setLoggedInUser(userData);
