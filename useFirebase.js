@@ -1,3 +1,4 @@
+
 /* global __app_id, __firebase_config, __initial_auth_token */
 import { useState, useEffect, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
@@ -43,6 +44,70 @@ const useFirebase = () => {
     }
   }, [db, videoPlayingState]);
 
+  // Enhanced function to check user role with better error handling
+  const checkUserRole = async (currentUser, dbInstance) => {
+    let userData = { uid: currentUser.uid, email: currentUser.email, role: 'audience' };
+
+    try {
+      // First check custom claims
+      const idTokenResult = await currentUser.getIdTokenResult();
+      const customClaimRole = idTokenResult.claims.role;
+
+      console.log("UID:", currentUser.uid);
+      console.log("Email:", currentUser.email);
+      console.log("Custom Claim Role:", customClaimRole);
+
+      if (customClaimRole && ['admin', 'judge'].includes(customClaimRole)) {
+        userData.role = customClaimRole;
+        console.log("Role from custom claims:", customClaimRole);
+      }
+
+      // Then check Firestore document
+      try {
+        const judgeDocRef = doc(dbInstance, `artifacts/${CANVAS_APP_ID}/public/data/judges`, currentUser.uid);
+        const judgeDocSnap = await getDoc(judgeDocRef);
+        
+        if (judgeDocSnap.exists()) {
+          const judgeData = judgeDocSnap.data();
+          userData = { ...userData, ...judgeData };
+          console.log("User data from Firestore:", judgeData);
+          
+          // Firestore role takes precedence over custom claims for security
+          if (judgeData.role && ['admin', 'judge'].includes(judgeData.role)) {
+            userData.role = judgeData.role;
+          }
+        } else {
+          console.log("No Firestore document found for user:", currentUser.uid);
+        }
+      } catch (firestoreError) {
+        console.error("Error accessing Firestore judge document:", firestoreError);
+        // Continue with custom claims or admin email fallback
+      }
+
+      // Final fallback: check if it's the hardcoded admin email
+      if (userData.role === 'audience' && currentUser.email === ADMIN_EMAIL) {
+        userData.role = 'admin';
+        userData.name = 'ผู้ดูแลระบบ';
+        console.log('User identified as admin via hardcoded email:', currentUser.email);
+      }
+
+      return userData;
+
+    } catch (error) {
+      console.error("Error checking user role:", error);
+      // Fallback to admin email check
+      if (currentUser.email === ADMIN_EMAIL) {
+        return {
+          uid: currentUser.uid,
+          email: currentUser.email,
+          role: 'admin',
+          name: 'ผู้ดูแลระบบ'
+        };
+      }
+      return userData; // Return audience role as fallback
+    }
+  };
+
   useEffect(() => {
     const initializeFirebase = async () => {
       try {
@@ -65,62 +130,22 @@ const useFirebase = () => {
         const unsubscribe = onAuthStateChanged(authInstance, async (currentUser) => {
           if (currentUser) {
             setUserId(currentUser.uid);
-            let userData = { uid: currentUser.uid, email: currentUser.email, role: 'audience' };
-
-            try {
-              const idTokenResult = await currentUser.getIdTokenResult();
-              const customClaimRole = idTokenResult.claims.role;
-
-              if (customClaimRole) {
-                userData.role = customClaimRole;
-                if (customClaimRole === 'judge' || customClaimRole === 'admin') {
-                  const judgeDocRef = doc(dbInstance, `artifacts/${CANVAS_APP_ID}/public/data/judges`, currentUser.uid);
-                  const judgeDocSnap = await getDoc(judgeDocRef);
-                  if (judgeDocSnap.exists()) {
-                    userData.name = judgeDocSnap.data().name;
-                  } else {
-                    userData.name = currentUser.displayName || currentUser.email;
-                  }
-                } else {
-                  userData.name = currentUser.displayName || currentUser.email;
-                }
-              } else {
-                const judgeDocRef = doc(dbInstance, `artifacts/${CANVAS_APP_ID}/public/data/judges`, currentUser.uid);
-                const judgeDocSnap = await getDoc(judgeDocRef);
-                if (judgeDocSnap.exists()) {
-                  userData = { ...userData, ...judgeDocSnap.data() };
-                } else {
-                  if (currentUser.email === ADMIN_EMAIL) {
-                    userData.role = 'admin';
-                    userData.name = 'ผู้ดูแลระบบ';
-                  } else {
-                    console.log('User profile not found, setting as audience.');
-                  }
-                }
-              }
-            } catch (claimError) {
-              console.error("Error fetching custom claims:", claimError);
-              const judgeDocRef = doc(dbInstance, `artifacts/${CANVAS_APP_ID}/public/data/judges`, currentUser.uid);
-              const judgeDocSnap = await getDoc(judgeDocRef);
-              if (judgeDocSnap.exists()) {
-                userData = { ...userData, ...judgeDocSnap.data() };
-              } else {
-                if (currentUser.email === ADMIN_EMAIL) {
-                  userData.role = 'admin';
-                  userData.name = 'ผู้ดูแลระบบ';
-                } else {
-                  console.log('User profile not found, setting as audience due to claim error.');
-                }
-              }
-            }
+            
+            // Use enhanced role checking function
+            const userData = await checkUserRole(currentUser, dbInstance);
             setLoggedInUser(userData);
+            
+            console.log("Final user role:", userData.role);
+            
           } else {
             setUserId(null);
             setLoggedInUser(null);
+            console.log('User is logged out or anonymous.');
           }
           setLoading(false);
         });
 
+        // Handle initial authentication
         if (CANVAS_INITIAL_AUTH_TOKEN) {
           try {
             await signInWithCustomToken(authInstance, CANVAS_INITIAL_AUTH_TOKEN);
@@ -132,6 +157,7 @@ const useFirebase = () => {
           await signInAnonymously(authInstance);
         }
 
+        // Listen for app state changes
         const appStateDocRef = doc(dbInstance, `artifacts/${CANVAS_APP_ID}/public/data/appState/control`);
         const unsubscribeAppState = onSnapshot(appStateDocRef, (docSnap) => {
           if (docSnap.exists()) {
@@ -139,6 +165,8 @@ const useFirebase = () => {
             setVideoPlayingState(data.videoPlaying || false);
             setShowSummaryScreen(data.showSummaryScreen || false);
           }
+        }, (error) => {
+          console.error("Error listening to app state:", error);
         });
 
         return () => {
