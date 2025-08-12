@@ -28,6 +28,35 @@ args = "npm run build"
 task = "shell.exec"
 args = "npx serve -s build -l 5000"
 
+[[workflows.workflow]]
+name = "push"
+mode = "sequential"
+author = 15009130
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "git config --global user.email \"prathipweiyngya@gmail.com\""
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "git config --global user.name \"Yadyo\""
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "git add ."
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "git commit -m \"อัปเดตโค้ดล่าสุด\""
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "git push"
+
+[[ports]]
+localPort = 3000
+externalPort = 3000
+
 [[ports]]
 localPort = 5000
 externalPort = 80
