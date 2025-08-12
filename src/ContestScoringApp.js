@@ -124,9 +124,18 @@ const useFirebase = () => {
 
             // Enhanced role checking with better error handling
             try {
-              // First check custom claims
-              const idTokenResult = await currentUser.getIdTokenResult();
-              const customClaimRole = idTokenResult.claims.role;
+              // First check custom claims with retry logic
+              let idTokenResult = null;
+              try {
+                idTokenResult = await currentUser.getIdTokenResult();
+              } catch (tokenError) {
+                console.warn("Error getting ID token, retrying...", tokenError);
+                // Force refresh token and retry
+                await currentUser.getIdToken(true);
+                idTokenResult = await currentUser.getIdTokenResult();
+              }
+              
+              const customClaimRole = idTokenResult?.claims?.role;
 
               console.log("UID:", currentUser.uid);
               console.log("Email:", currentUser.email);
@@ -160,8 +169,11 @@ const useFirebase = () => {
                   }
                 }
               } catch (firestoreError) {
-                console.error("Error accessing Firestore judge document:", firestoreError);
-                showMessage(`เกิดข้อผิดพลาดในการเข้าถึงข้อมูลผู้ใช้: ${firestoreError.message}`, 'error');
+                console.warn("Error accessing Firestore judge document:", firestoreError);
+                // Only show error if it's not a permission denied error (expected for audience users)
+                if (firestoreError.code !== 'permission-denied') {
+                  showMessage(`เกิดข้อผิดพลาดในการเข้าถึงข้อมูลผู้ใช้: ${firestoreError.message}`, 'error');
+                }
               }
 
               // Final fallback: check hardcoded admin email
@@ -172,28 +184,32 @@ const useFirebase = () => {
               }
 
             } catch (claimError) {
-              console.error("Error fetching custom claims:", claimError);
-              showMessage(`เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์: ${claimError.message}`, 'error');
+              console.warn("Error fetching custom claims:", claimError);
               
               // Fallback to hardcoded admin check
               if (currentUser.email === ADMIN_EMAIL) {
                 userData.role = 'admin';
                 userData.name = 'ผู้ดูแลระบบ';
                 console.log('Admin access granted via hardcoded email fallback');
+              } else {
+                // Only show error for non-anonymous users
+                if (!currentUser.isAnonymous) {
+                  showMessage(`เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์: ${claimError.message}`, 'error');
+                }
               }
             }
             setLoggedInUser(userData);
             // Show role message AFTER loggedInUser is set
             if (userData.role === 'admin' || userData.role === 'judge') {
                 showMessage(`✅ ROLE ที่ได้รับ: ${userData.role}`, 'success');
-            } else {
+            } else if (!currentUser.isAnonymous) {
                 showMessage("🚫 บัญชีนี้ยังไม่ได้กำหนด role (admin/judge) ใน Firestore หรือ Custom Claims", 'error');
             }
 
           } else {
             setUserId(null);
             setLoggedInUser(null);
-            showMessage("ยังไม่ได้ login", 'info');
+            // Don't show login message for anonymous users in development
             console.log('User is logged out or anonymous.');
           }
           setLoading(false);
@@ -220,6 +236,12 @@ const useFirebase = () => {
             const data = docSnap.data();
             setVideoPlayingState(data.videoPlaying || false);
             setShowSummaryScreen(data.showSummaryScreen || false); // Update showSummaryScreen from Firestore
+          }
+        }, (error) => {
+          console.warn("Error listening to appState (non-critical):", error);
+          // Silently fail for anonymous users - this is expected
+          if (error.code !== 'permission-denied') {
+            showMessage('เกิดข้อผิดพลาดในการเชื่อมต่อข้อมูล', 'error');
           }
         });
 
@@ -1907,84 +1929,104 @@ const AdminPanel = () => {
         const aggregatedScoresDocRef = doc(db, `artifacts/${CANVAS_APP_ID}/public/data/aggregatedScores`, 'summary');
 
         const unsubscribeAppState = onSnapshot(appStateDocRef, async (docSnap) => {
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            setVideoUrl(data.videoUrl || '');
-            setIsCountingDown(data.isCountingDown || false);
-            setCountdownValue(data.countdownValue || 0);
-            // showSummaryScreen is now handled by the context, no need to set here
-            // setShowSummaryScreen(data.showSummaryScreen || false);
+          try {
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              setVideoUrl(data.videoUrl || '');
+              setIsCountingDown(data.isCountingDown || false);
+              setCountdownValue(data.countdownValue || 0);
+              // showSummaryScreen is now handled by the context, no need to set here
+              // setShowSummaryScreen(data.showSummaryScreen || false);
 
-            if (data.isCountingDown && data.nextContestantIdAfterCountdown) {
-              const nextContestantSnap = await getDoc(doc(db, `artifacts/${CANVAS_APP_ID}/public/data/contestants`, data.nextContestantIdAfterCountdown));
-              if (nextContestantSnap.exists()) {
-                setNextContestantData({ id: nextContestantSnap.id, ...nextContestantSnap.data() });
-              } else {
+              if (data.isCountingDown && data.nextContestantIdAfterCountdown) {
+                const nextContestantSnap = await getDoc(doc(db, `artifacts/${CANVAS_APP_ID}/public/data/contestants`, data.nextContestantIdAfterCountdown));
+                if (nextContestantSnap.exists()) {
+                  setNextContestantData({ id: nextContestantSnap.id, ...nextContestantSnap.data() });
+                } else {
+                  setNextContestantData(null);
+                }
+                setCurrentContestant(null);
+              } else if (showSummaryScreen) { // Use showSummaryScreen from context
+                setCurrentContestant(null);
                 setNextContestantData(null);
               }
-              setCurrentContestant(null);
-            } else if (showSummaryScreen) { // Use showSummaryScreen from context
-              setCurrentContestant(null);
-              setNextContestantData(null);
-            }
-            else {
-              setNextContestantData(null);
-              setAggregatedScores([]); // Clear aggregated scores when not on summary screen
-              if (data.currentContestantId) {
-                const contestantDocRef = doc(db, `artifacts/${CANVAS_APP_ID}/public/data/contestants`, data.currentContestantId);
-                const contestantSnap = await getDoc(contestantDocRef);
-                if (contestantSnap.exists()) {
-                  setCurrentContestant({ id: contestantSnap.id, ...contestantSnap.data() });
+              else {
+                setNextContestantData(null);
+                setAggregatedScores([]); // Clear aggregated scores when not on summary screen
+                if (data.currentContestantId) {
+                  try {
+                    const contestantDocRef = doc(db, `artifacts/${CANVAS_APP_ID}/public/data/contestants`, data.currentContestantId);
+                    const contestantSnap = await getDoc(contestantDocRef);
+                    if (contestantSnap.exists()) {
+                      setCurrentContestant({ id: contestantSnap.id, ...contestantSnap.data() });
+                    } else {
+                      setCurrentContestant(null);
+                    }
+                  } catch (contestantError) {
+                    console.warn("Error fetching contestant data:", contestantError);
+                    setCurrentContestant(null);
+                  }
                 } else {
                   setCurrentContestant(null);
                 }
-              } else {
-                setCurrentContestant(null);
               }
+            } else {
+              // For audience users, we don't need to initialize the document
+              setCurrentContestant(null);
+              setVideoUrl('');
+              setIsCountingDown(false);
+              setCountdownValue(0);
+              setNextContestantData(null);
+              setAggregatedScores([]);
             }
-          } else {
-            // Initialize appState if it doesn't exist
-            await setDoc(appStateDocRef, { currentContestantId: null, videoUrl: '', videoPlaying: false, isJudgingOpen: false, isCountingDown: false, countdownValue: 0, nextContestantIdAfterCountdown: null, isJudgingOpenChange: false, showSummaryScreen: false, showSummaryScreenChange: false }, { merge: true });
-            setCurrentContestant(null);
-            setVideoUrl('');
-            setIsCountingDown(false);
-            setCountdownValue(0);
-            setNextContestantData(null);
-            // showSummaryScreen is now handled by the context
-            // setShowSummaryScreen(false);
-            setAggregatedScores([]);
+          } catch (docError) {
+            console.warn("Error processing document snapshot:", docError);
           }
           setLoadingAudience(false);
         }, (error) => {
-          console.error("Error listening to appState for audience:", error);
+          console.warn("Error listening to appState for audience:", error);
+          // Silently handle permission denied errors for anonymous users
+          if (error.code !== 'permission-denied') {
+            console.error("Non-permission error:", error);
+          }
           setLoadingAudience(false);
         });
 
         const unsubscribeAggregatedScores = onSnapshot(aggregatedScoresDocRef, (docSnap) => {
-          if (docSnap.exists() && showSummaryScreen) { // Only update if summary screen is active
-            const data = docSnap.data();
-            const finalResults = Object.values(data).map(contestantResult => {
-              const count = contestantResult.submittedJudgesCount;
-              return {
-                id: contestantResult.id,
-                number: contestantResult.number,
-                name: contestantResult.name,
-                character: contestantResult.character,
-                imageUrl: contestantResult.imageUrl,
-                avgTotalScore: count > 0 ? (contestantResult.totalScoreSum / count).toFixed(2) : '0.00',
-                avgPersonality: count > 0 ? (contestantResult.personalitySum / count).toFixed(2) : '0.00',
-                avgWalking: count > 0 ? (contestantResult.walkingSum / count).toFixed(2) : '0.00',
-                avgAttire: count > 0 ? (contestantResult.attireSum / count).toFixed(2) : '0.00',
-                avgLanguage: count > 0 ? (contestantResult.languageSum / count).toFixed(2) : '0.00',
-                avgOverall: count > 0 ? (contestantResult.overallSum / count).toFixed(2) : '0.00',
-              };
-            }).sort((a, b) => parseFloat(b.avgTotalScore) - parseFloat(a.avgTotalScore));
-            setAggregatedScores(finalResults);
-          } else {
+          try {
+            if (docSnap.exists() && showSummaryScreen) { // Only update if summary screen is active
+              const data = docSnap.data();
+              const finalResults = Object.values(data).map(contestantResult => {
+                const count = contestantResult.submittedJudgesCount;
+                return {
+                  id: contestantResult.id,
+                  number: contestantResult.number,
+                  name: contestantResult.name,
+                  character: contestantResult.character,
+                  imageUrl: contestantResult.imageUrl,
+                  avgTotalScore: count > 0 ? (contestantResult.totalScoreSum / count).toFixed(2) : '0.00',
+                  avgPersonality: count > 0 ? (contestantResult.personalitySum / count).toFixed(2) : '0.00',
+                  avgWalking: count > 0 ? (contestantResult.walkingSum / count).toFixed(2) : '0.00',
+                  avgAttire: count > 0 ? (contestantResult.attireSum / count).toFixed(2) : '0.00',
+                  avgLanguage: count > 0 ? (contestantResult.languageSum / count).toFixed(2) : '0.00',
+                  avgOverall: count > 0 ? (contestantResult.overallSum / count).toFixed(2) : '0.00',
+                };
+              }).sort((a, b) => parseFloat(b.avgTotalScore) - parseFloat(a.avgTotalScore));
+              setAggregatedScores(finalResults);
+            } else {
+              setAggregatedScores([]);
+            }
+          } catch (processError) {
+            console.warn("Error processing aggregated scores:", processError);
             setAggregatedScores([]);
           }
         }, (error) => {
-          console.error("Error listening to aggregated scores for audience:", error);
+          console.warn("Error listening to aggregated scores for audience:", error);
+          // Silently handle permission denied errors for anonymous users
+          if (error.code !== 'permission-denied') {
+            console.error("Non-permission error in aggregated scores:", error);
+          }
+          setAggregatedScores([]);
         });
 
 
