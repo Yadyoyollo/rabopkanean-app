@@ -27,3 +27,7 @@ args = "npm run build"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npx serve -s build -l 5000"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
