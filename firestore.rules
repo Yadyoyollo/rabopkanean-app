@@ -1,71 +1,67 @@
-
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Helper function to check if the user is an admin.
-    // This makes the rules more readable and easier to maintain.
-    function isAdmin(appId) {
+    // Helper function to check if user is admin
+    function isAdmin() {
       return request.auth != null && 
-             get(/databases/$(database)/documents/artifacts/$(appId)/public/data/judges/$(request.auth.uid)).data.role == 'admin';
+        (request.auth.token.email == 'prathipweiyngya@gmail.com' ||
+         request.auth.token.role == 'admin' ||
+         exists(/databases/$(database)/documents/artifacts/nrkaneanproject/public/data/judges/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/artifacts/nrkaneanproject/public/data/judges/$(request.auth.uid)).data.role == 'admin');
     }
 
-    // Helper function to check if the user is a judge
-    function isJudge(appId) {
+    // Helper function to check if user is judge or admin
+    function isJudgeOrAdmin() {
       return request.auth != null && 
-             get(/databases/$(database)/documents/artifacts/$(appId)/public/data/judges/$(request.auth.uid)).data.role == 'judge';
+        (isAdmin() ||
+         exists(/databases/$(database)/documents/artifacts/nrkaneanproject/public/data/judges/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/artifacts/nrkaneanproject/public/data/judges/$(request.auth.uid)).data.role in ['judge', 'admin']);
     }
 
-    // Helper function to check if the user is a judge or admin
-    function isJudgeOrAdmin(appId) {
-      return request.auth != null && 
-             exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/judges/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/artifacts/$(appId)/public/data/judges/$(request.auth.uid)).data.role in ['judge', 'admin'];
+    // Public read access for contest data
+    match /artifacts/nrkaneanproject/public/data/contestants/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // Public data: anyone authenticated can read
+    // App state control - admin only for write, authenticated users can read
+    match /artifacts/nrkaneanproject/public/data/appState/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // Aggregated scores - admin write, authenticated read
+    match /artifacts/nrkaneanproject/public/data/aggregatedScores/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // Judges collection - admin manage, self-read
+    match /artifacts/nrkaneanproject/public/data/judges/{judgeId} {
+      allow read: if request.auth != null && 
+        (request.auth.uid == judgeId || isAdmin());
+      allow write: if isAdmin() ||
+        (request.auth.uid == judgeId && 
+         request.auth.token.email == 'prathipweiyngya@gmail.com');
+    }
+
+    // User scores - judge write own, admin read all
+    match /artifacts/nrkaneanproject/users/{userId}/scores/{document=**} {
+      allow read: if request.auth != null && 
+        (request.auth.uid == userId || isAdmin());
+      allow write: if request.auth != null && 
+        request.auth.uid == userId && isJudgeOrAdmin();
+    }
+
+    // Allow read access to public data for anonymous users (audience display)
     match /artifacts/{appId}/public/data/{document=**} {
-      allow read: if request.auth != null;
+      allow read: if true;
     }
 
-    // Aggregated scores: only admin can write, anyone authenticated can read
-    match /artifacts/{appId}/public/data/aggregatedScores/{docId} {
-      allow read: if request.auth != null;
-      allow write: if isAdmin(appId);
-    }
-
-    // Judges collection:
-    match /artifacts/{appId}/public/data/judges/{judgeId} {
-      // Anyone authenticated can read their own judge profile.
-      // Admin can read all judge profiles.
-      allow read: if request.auth != null && (request.auth.uid == judgeId || isAdmin(appId));
-
-      // Only Admin can create/update/delete judge profiles.
-      // Exception: Allow the hardcoded Admin email to write their OWN profile.
-      allow write: if isAdmin(appId) || 
-                      (request.auth.uid == judgeId && 
-                       request.auth.token.email == "prathipweiyngya@gmail.com" && 
-                       request.resource.data.role == 'admin');
-    }
-
-    // Contestants: only admin can write, anyone authenticated can read
-    match /artifacts/{appId}/public/data/contestants/{contestantId} {
-      allow read: if request.auth != null;
-      allow write: if isAdmin(appId);
-    }
-
-    // App state control: only admin can read/write
-    match /artifacts/{appId}/public/data/appState/control {
-      allow read: if request.auth != null;
-      allow write: if isAdmin(appId);
-    }
-
-    // Judges' scores: only the judge can write/read their own scores, admin can read all
-    match /artifacts/{appId}/users/{userId}/scores/{contestantId} {
-      // Judge can read/write their own scores.
-      // Admin can read all scores.
-      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin(appId));
-      allow write: if request.auth != null && request.auth.uid == userId && isJudgeOrAdmin(appId);
+    // Default: deny all other access
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
